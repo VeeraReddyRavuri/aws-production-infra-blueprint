@@ -5,10 +5,10 @@ provider "aws" {
 
 #Create a VPC
 resource "aws_vpc" "main" {
-    cidr_block = "10.0.0.0/16"
+    cidr_block = var.vpc_cidr
 
     tags = {
-        Name = "prod-vpc"
+        Name = "${var.env}-vpc"
     }
 }
 
@@ -19,7 +19,7 @@ resource "aws_subnet" "public" {
     map_public_ip_on_launch = true
 
     tags = {
-        Name = "public-subnet"
+        Name = "${var.env}-public-subnet"
     }
 }
 
@@ -29,7 +29,7 @@ resource "aws_subnet" "private" {
     cidr_block = "10.0.2.0/24"
 
     tags = {
-        Name = "private-subnet"
+        Name = "${var.env}-private-subnet"
     }
 }
 
@@ -38,7 +38,7 @@ resource "aws_internet_gateway" "igw" {
     vpc_id = aws_vpc.main.id
 
     tags = {
-        Name = "prod-igw"
+        Name = "${var.env}-igw"
     }
 }
 
@@ -47,7 +47,7 @@ resource "aws_route_table" "public" {
     vpc_id = aws_vpc.main.id
 
     tags = {
-        Name = "public-rt"
+        Name = "${var.env}-public-rt"
     }
 }
 
@@ -105,7 +105,7 @@ resource "aws_instance" "nat" {
     key_name = aws_key_pair.main.key_name
 
     tags = {
-      Name = "nat-instance"
+      Name = "${var.env}-nat-instance"
     }
 }
 
@@ -114,7 +114,7 @@ resource "aws_route_table" "private" {
     vpc_id = aws_vpc.main.id
 
     tags = {
-        Name = "private-rt"
+        Name = "${var.env}-private-rt"
     }  
 }
 
@@ -165,7 +165,7 @@ resource "aws_instance" "private_ec2" {
     key_name = aws_key_pair.main.key_name
 
     tags = {
-      Name = "private-ec2"
+      Name = "${var.env}-private-ec2"
     }
 }
 
@@ -200,6 +200,6 @@ resource "aws_instance" "bastion" {
     key_name = aws_key_pair.main.key_name
 
     tags = {
-        Name = "bastion-host"
+        Name = "${var.env}-bastion-host"
     }
 }
