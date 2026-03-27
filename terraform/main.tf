@@ -104,6 +104,8 @@ resource "aws_instance" "nat" {
 
     key_name = aws_key_pair.main.key_name
 
+    iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
+
     tags = {
       Name = "${var.env}-nat-instance"
     }
@@ -164,6 +166,8 @@ resource "aws_instance" "private_ec2" {
     vpc_security_group_ids = [aws_security_group.private_sg.id]
     key_name = aws_key_pair.main.key_name
 
+    iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
+
     tags = {
       Name = "${var.env}-private-ec2"
     }
@@ -198,6 +202,8 @@ resource "aws_instance" "bastion" {
     vpc_security_group_ids = [aws_security_group.bastion_sg.id]
     associate_public_ip_address = true
     key_name = aws_key_pair.main.key_name
+
+    iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
 
     tags = {
         Name = "${var.env}-bastion-host"
