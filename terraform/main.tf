@@ -135,7 +135,7 @@ resource "aws_route_table_association" "private_association" {
 
 # TO connect to NAT instance, we need ssh access, so we add key pair
 resource "aws_key_pair" "main" {
-    key_name = "devops-key"
+    key_name = "${var.env}-devops-key"
     public_key = file("/home/veera/.ssh/id_rsa.pub")
 }
 

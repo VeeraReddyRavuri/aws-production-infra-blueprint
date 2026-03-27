@@ -1,11 +1,11 @@
-# terraform {
-#    backend "s3" {
-#        bucket = "ai-infra-tf-state-bucket-202601"
-#        key = "terraform.tfstate"
-#        region = "ap-south-1"
-#        dynamodb_table = "terraform-lock"      
-#    }
-#}
+terraform {
+  backend "s3" {
+    bucket = "ai-infra-tf-state-bucket-202601"
+    key = "${var.env}/terraform.tfstate"
+    region = "ap-south-1"
+    dynamodb_table = "terraform-lock"    
+  } 
+}
 
 #resource "aws_s3_bucket" "tf_state" {
 #    bucket = "ai-infra-tf-state-bucket-202601"
