@@ -1,0 +1,40 @@
+- name: Configure NAT instance
+  hosts: nat
+  become: yes
+
+  tasks:
+    - name: Enable IP forwarding
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: 1
+        state: present
+
+    - name: Check if MASQUERADE rule exists
+      command: iptables -t nat -A POSTROUTING -o ens5 -j MASQUERADE
+      register: masq_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add MASQUERADE if missing
+      command: iptables -t -A POSTROUTING -o ens5 -j MASQUERADE
+      when: masq_check.rc != 0
+
+    - name: Check FORWARD rule
+      command: iptables -A FORWARD -i ens5 -o ens5 -j ACCEPT
+      register: fwd_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add FORWARD rule if missing
+      command: iptables -A FORWARD -i ens5 -o ens5 -j ACCEPT
+      when: fwd_check.rc != 0
+
+    - name: Check ESTABLISHED rule
+      command: iptables -A FORWARD -o ens5 -m state --state RELATED,ESTABLISHED -j ACCEPT
+      register: est_check
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Add ESTABLISHED rule if missing
+      command: iptables -A FORWARD -o ens5 -m state --state RELATED,ESTABLISHED -j ACCEPT
+      when: est_check != 0
