@@ -19,43 +19,46 @@ This project simulates what a cloud/DevOps engineer does on the job — not just
 - Infrastructure as Code (Terraform) with remote state and environment isolation
 - Configuration Management (Ansible) with idempotency validation
 - Secure AWS networking with bastion + private subnet architecture
-- IAM least privilege design
+- IAM least-privilege policy design and debugging
 - Observability via CloudWatch
 - Operational debugging across 5 failure scenarios
 
 ---
 
-## Architecture
+## [Architecture](/docs/architecture.md)
 
 ```mermaid
 flowchart TD
-    Client["Client (Browser / curl)"]
-    Bastion["Bastion Host\n(Public EC2 — SSH only from your IP)"]
 
-    subgraph VPC["AWS VPC  10.0.0.0/16"]
+    Client["Client (Browser / Curl)"]
+
+    Bastion["Bastion Host\n(Public EC2)"]
+
+    subgraph VPC["AWS VPC (10.0.0.0/16)"]
+
         subgraph PublicSubnet["Public Subnet"]
             Bastion
-            NAT["NAT Gateway"]
+            NAT["NAT Instance"]
         end
+
         subgraph PrivateSubnet["Private Subnet"]
-            AppEC2["App EC2\n(Docker + FastAPI)"]
+            AppEC2["Private EC2\n(Docker + FastAPI)"]
         end
+
     end
 
-    S3["S3 — Terraform Remote State"]
-    DynamoDB["DynamoDB — State Lock"]
     CloudWatch["CloudWatch Logs"]
-    Lambda["Lambda — CPU Alarm Handler"]
 
     Client --> Bastion
-    Bastion -->|"ProxyJump SSH"| AppEC2
-    AppEC2 --> NAT --> Internet["Internet"]
+    Bastion --> AppEC2
+
+    AppEC2 --> NAT
+    NAT --> Internet["Internet"]
+
     AppEC2 --> CloudWatch
-    CloudWatch --> Lambda
-    Lambda --> S3
 ```
 
-**Security model:** The application EC2 has no public IP and accepts SSH only from the bastion's security group. The bastion accepts port 22 only from a single authorized CIDR. Outbound internet for the private EC2 routes through NAT Gateway — no inbound exposure.
+**Security model:** The application EC2 has no public IP and accepts SSH only from the bastion's security group. The bastion accepts port 22 only from a single authorized CIDR. Outbound internet for the private EC2 routes through NAT Instance — no inbound exposure.
 
 ---
 
@@ -65,9 +68,9 @@ flowchart TD
 |---|---|
 | Infrastructure as Code | Terraform |
 | Configuration Management | Ansible (role-based) |
-| Cloud Provider | AWS (EC2, VPC, IAM, S3, CloudWatch, Lambda) |
+| Cloud Provider | AWS (EC2, VPC, IAM, S3, DynamoDB, CloudWatch) |
 | Application Runtime | Docker |
-| Application | FastAPI (from [Project 2](../bug-tracker-containerized-stack)) |
+| Application | FastAPI (from [Previous Project](https://github.com/VeeraReddyRavuri/bug-tracker-containerized-stack)) |
 | State Backend | S3 + DynamoDB (locking) |
 
 ---
@@ -75,19 +78,19 @@ flowchart TD
 ## Engineering Highlights
 
 **Secure Networking**
-VPC designed with strict subnet isolation: application EC2 lives in a private subnet with no public IP. Internet access for outbound traffic (Docker pulls, package installs) routes through NAT Gateway. SSH access follows a jump-host pattern — bastion → private EC2 via ProxyJump — so the app server is never directly reachable.
+VPC designed with strict subnet isolation: application EC2 lives in a private subnet with no public IP. Internet access for outbound traffic (Docker pulls, package installs) routes through NAT Instance. SSH access follows a jump-host pattern — bastion → private EC2 via ProxyJump — so the app server is never directly reachable.
 
 **IAM Least Privilege**
-EC2 instance role scoped to exactly two permissions: `s3:GetObject` on the specific artifact bucket and `logs:PutLogEvents` + `logs:CreateLogStream` on the CloudWatch log group. No wildcard actions, no wildcard resources. Spent time debugging a real permission error when CloudWatch agent failed silently — traced it to a missing `logs:DescribeLogGroups` permission.
+EC2 instance role scoped to exactly two permissions: `s3:GetObject` on the specific artifact bucket and `logs:PutLogEvents` + `logs:CreateLogStream` on the CloudWatch log group. Scoped permissions for required actions; resource-level scoping can be further refined in production. Spent time debugging a real permission error when CloudWatch agent failed silently — traced it to a missing `logs:DescribeLogStreams` permission.
 
 **Terraform Remote State with Locking**
 S3 backend configured for state persistence; DynamoDB table provides state locking to prevent concurrent apply collisions. Separate state keys per environment (`dev/terraform.tfstate`, `stage/terraform.tfstate`) enforced via `-backend-config` at init time rather than hardcoded in config — keeps environments properly isolated.
 
 **Idempotent Ansible Roles**
-Playbook structured into four roles: `docker`, `firewall`, `app`, `cloudwatch`. Validated idempotency by running the playbook twice and confirming zero changed tasks on the second run. Where tasks initially failed idempotency (package installs triggering changes), fixed them with proper `state: present` declarations and conditional guards.
+Playbook structured into four roles: `docker`, `nat`, `app`, `cloudwatch`. Validated idempotency by running the playbook twice and confirming zero changed tasks on the second run. Where tasks initially failed idempotency (package installs triggering changes), fixed them with proper `state: present` declarations and conditional guards.
 
-**CloudWatch + Lambda Integration**
-CloudWatch agent installed and configured via Ansible to ship system logs from the private EC2 to a log group. A Lambda function subscribed to a CPU utilization alarm — when the alarm fires, Lambda logs the event payload to S3. Deployed via AWS console to understand the wiring; not production-grade, but validates the alerting pipeline end-to-end.
+**CloudWatch**
+CloudWatch agent installed and configured via Ansible to ship system logs from the private EC2 to a log group.
 
 ---
 
@@ -100,8 +103,8 @@ Five real failure scenarios were reproduced and documented. This section exists 
 | [Terraform Drift Detection](./incident_reports/terraform-drift.md) | Manually deleted a security group rule in the console, then ran `terraform plan` | Plan showed the drift as a resource to re-add. Documented detection method and why state-driven infra catches this automatically |
 | [State File Corruption](./incident_reports/terraform-state-corruption.md) | Renamed the remote state file to simulate corruption, then attempted `terraform apply` | Terraform threw a backend initialization error. Recovery: restored the backup state key, re-ran `terraform init`, validated with `terraform plan` |
 | [Ansible Idempotency Failure](./incident_reports/ansible-idempotency-failure.md) | Second playbook run showed changed tasks in the `docker` role | Root cause: `apt install` without `state: present`. Fixed with idempotent task declarations; second run confirmed 0 changes |
-| [Terraform State Locking](./incident_reports/terraform-locking.md) | Simulated concurrent `terraform apply` by interrupting a run mid-execution | Without DynamoDB, state file can be overwritten. With locking, second apply is blocked until the lock is released or force-unlocked |
-| [NAT Connectivity Failure](./incident_reports/nat-connectivity-incident.md) | Private EC2 had no outbound internet access after initial provisioning | NAT Gateway was in the wrong subnet. Fixed subnet association, verified with `curl` from private EC2 |
+| [Terraform State Locking](./incident_reports/terraform-locking.md) | Simulated locking behavior by interrupting an active apply; observed lock persistence and need for manual unlock using `terraform force-unlock` mid-execution | Without DynamoDB, state file can be overwritten. With locking, second apply is blocked until the lock is released or force-unlocked |
+| [NAT Connectivity Failure](./incident_reports/nat-connectivity-incident.md) | Private EC2 had no outbound internet access after initial provisioning | NAT Instance was in the wrong subnet. Fixed subnet association, verified with `curl` from private EC2 |
 
 ---
 
@@ -135,7 +138,7 @@ This project deploys containers directly on EC2 via Docker. In a production syst
 aws-production-infra-blueprint/
 │
 ├── terraform/
-│   ├── main.tf             # VPC, subnets, EC2, NAT Gateway, SGs
+│   ├── main.tf             # VPC, subnets, EC2, NAT Instance, SGs
 │   ├── variables.tf
 │   ├── iam.tf              # Least-privilege EC2 role
 │   ├── backend.tf          # S3 + DynamoDB remote state
@@ -147,12 +150,9 @@ aws-production-infra-blueprint/
 │   ├── playbook.yml
 │   └── roles/
 │       ├── docker/         # Install + configure Docker
-│       ├── firewall/       # UFW rules
+│       ├── nat/            # iptables
 │       ├── app/            # Pull and run containerized FastAPI
 │       └── cloudwatch/     # Agent install + log shipping config
-│
-├── lambda/
-│   └── cpu_alarm_handler.py   # Logs alarm event to S3
 │
 ├── incident_reports/
 │   ├── terraform-drift.md
@@ -210,14 +210,14 @@ ansible-playbook -i inventory.ini playbook.yml
 ### 4. Access Application
 
 ```bash
-ssh -J ubuntu@<bastion-ip> ubuntu@<private-ec2-ip>
-curl localhost:8080
+ssh -A -J ubuntu@<bastion-ip> ubuntu@<private-ec2-ip>
+curl localhost:8080/health
 ```
 
 ### 5. Verify CloudWatch Logs
 
 ```
-AWS Console → CloudWatch → Log Groups → /dev/ec2/syslog
+AWS Console → CloudWatch → Log Groups → dev-syslog
 ```
 
 ---
@@ -230,18 +230,25 @@ Walkthrough covers: Terraform provisioning → Ansible configuration → SSH via
 
 ---
 
+## Rollback Strategy
+
+- Terraform: revert using previous state or re-apply stable configuration
+- Ansible: idempotent playbooks ensure safe re-runs
+- Docker: restart previous container version if needed
+
+---
+
 ## Known Limitations
 
 - No HTTPS / TLS termination
 - No Application Load Balancer
 - No autoscaling
 - No secrets management (SSM Parameter Store or Secrets Manager)
-- Lambda deployment is manual (no IaC for Lambda yet)
 - No CI/CD pipeline
 
 ## Planned Improvements
 
-- [ ] Replace NAT instance with NAT Gateway (already partially done — verify this)
+- [ ] Replace NAT instance with NAT Gateway
 - [ ] Add ALB with HTTPS via ACM
 - [ ] Terraform module for reusable VPC pattern
 - [ ] GitHub Actions pipeline for plan + apply
@@ -252,5 +259,11 @@ Walkthrough covers: Terraform provisioning → Ansible configuration → SSH via
 
 ## Related Projects
 
-- [P1 — Linux Reliability Toolkit](../linux-reliability-toolkit) — System monitoring and failure simulation
-- [P2 — Bug Tracker Containerized Stack](../bug-tracker-containerized-stack) — FastAPI + PostgreSQL + Nginx in Docker
+- [P1 — Linux Reliability Toolkit](https://github.com/VeeraReddyRavuri/linux-reliability-toolkit) — System monitoring and failure simulation
+- [P2 — Bug Tracker Containerized Stack](https://github.com/VeeraReddyRavuri/bug-tracker-containerized-stack) — FastAPI + PostgreSQL + Nginx in Docker
+
+---
+
+## Version
+
+**Version:** v1.0.0
