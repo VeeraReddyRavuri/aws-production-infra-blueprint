@@ -16,28 +16,30 @@ resource "aws_iam_role" "ec2_role" {
 }
 
 resource "aws_iam_policy" "ec2_policy" {
-    name = "${var.env}-ec2-policy"
+  name = "${var.env}-ec2-policy"
 
-    policy = jsonencode({
-        Version = "2012-10-17"
-        Statement = [
-            {
-                Effect = "Allow"
-                Action = [
-                    "s3:GetObject"
-                ]
-                Resource = "*"
-            },
-            {
-                Effect = "Allow"
-                Action = [
-                    "logs:CreateLogStream",
-                    "logs:PutLogEvents"
-                ]
-                Resource = "*"
-            }
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
         ]
-    })  
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 resource "aws_iam_role_policy_attachment" "attach" {

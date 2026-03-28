@@ -1,0 +1,9 @@
+- name: Run application container
+  community.docker.docker_container:
+    name: bug-tracker
+    image: veerareddyravuri/bug-tracker-api:latest
+    state: started
+    recreate: yes
+    restart_policy: always
+    ports:
+      - "8080:8000"
