@@ -11,9 +11,15 @@
 
 ---
 
-## What This Project Demonstrates
+## TL;DR
 
-This project simulates what a cloud/DevOps engineer does on the job — not just provisioning infrastructure, but **operating it**: catching drift, recovering from state corruption, enforcing idempotency, and debugging real failures with written incident reports.
+- Built a production-style AWS environment using Terraform, Ansible, and Docker
+- Implemented secure private networking (bastion + private EC2 + NAT)
+- Designed remote state with S3 + DynamoDB locking for safe team workflows
+- Simulated and resolved 5 real-world failure scenarios (drift, state corruption, IAM issues)
+- Validated idempotency and operational reliability across deployments
+
+---
 
 **Core competencies demonstrated:**
 - Infrastructure as Code (Terraform) with remote state and environment isolation
@@ -78,19 +84,51 @@ flowchart TD
 ## Engineering Highlights
 
 **Secure Networking**
-VPC designed with strict subnet isolation: application EC2 lives in a private subnet with no public IP. Internet access for outbound traffic (Docker pulls, package installs) routes through NAT Instance. SSH access follows a jump-host pattern — bastion → private EC2 via ProxyJump — so the app server is never directly reachable.
+VPC designed with strict subnet isolation: application EC2 lives in a private subnet with no public IP. Internet access for outbound traffic (Docker pulls, package installs) routes through NAT Instance. SSH access follows a jump-host pattern: bastion → private EC2 via ProxyJump, so the app server is never directly reachable.
 
 **IAM Least Privilege**
-EC2 instance role scoped to exactly two permissions: `s3:GetObject` on the specific artifact bucket and `logs:PutLogEvents` + `logs:CreateLogStream` on the CloudWatch log group. Scoped permissions for required actions; resource-level scoping can be further refined in production. Spent time debugging a real permission error when CloudWatch agent failed silently — traced it to a missing `logs:DescribeLogStreams` permission.
+EC2 instance role scoped to exactly two permissions: `s3:GetObject` on the specific artifact bucket and `logs:PutLogEvents` + `logs:CreateLogStream` on the CloudWatch log group. Scoped permissions for required actions; resource-level scoping can be further refined in production. Spent time debugging a real permission error when CloudWatch agent failed silently, traced it to a missing `logs:DescribeLogStreams` permission.
 
 **Terraform Remote State with Locking**
-S3 backend configured for state persistence; DynamoDB table provides state locking to prevent concurrent apply collisions. Separate state keys per environment (`dev/terraform.tfstate`, `stage/terraform.tfstate`) enforced via `-backend-config` at init time rather than hardcoded in config — keeps environments properly isolated.
+S3 backend configured for state persistence; DynamoDB table provides state locking to prevent concurrent apply collisions. Separate state keys per environment (`dev/terraform.tfstate`, `stage/terraform.tfstate`) enforced via `-backend-config` at init time rather than hardcoded in config keeps environments properly isolated.
 
 **Idempotent Ansible Roles**
 Playbook structured into four roles: `docker`, `nat`, `app`, `cloudwatch`. Validated idempotency by running the playbook twice and confirming zero changed tasks on the second run. Where tasks initially failed idempotency (package installs triggering changes), fixed them with proper `state: present` declarations and conditional guards.
 
 **CloudWatch**
 CloudWatch agent installed and configured via Ansible to ship system logs from the private EC2 to a log group.
+
+---
+
+## Design Decisions & Tradeoffs
+
+- **NAT Instance vs NAT Gateway**
+  Chose NAT Instance to understand networking internals and cost tradeoffs.
+  In production, NAT Gateway would be preferred for reliability and reduced ops overhead.
+
+- **Raw Docker on EC2 vs ECS/EKS**
+  Used Docker directly to understand container lifecycle, networking, and failure modes
+  before abstracting them away with orchestrators.
+
+- **Remote State via S3 + DynamoDB**
+  Enables safe collaboration and prevents concurrent state corruption — critical for team environments.
+
+- **Bastion Host over direct access**
+  Enforces strict network boundaries; no direct SSH to application layer.
+
+---
+
+## Failure-Driven Engineering
+
+This project intentionally introduces and resolves failures to simulate real production scenarios.
+
+Key principles applied:
+- Infrastructure should reveal drift automatically
+- State must be protected against corruption and concurrent writes
+- Configuration must be idempotent and predictable
+- Networking failures should be diagnosable, not silent
+
+Each incident report documents not just the fix, but the reasoning behind it.
 
 ---
 
@@ -105,30 +143,6 @@ Five real failure scenarios were reproduced and documented. This section exists 
 | [Ansible Idempotency Failure](./incident_reports/ansible-idempotency-failure.md) | Second playbook run showed changed tasks in the `docker` role | Root cause: `apt install` without `state: present`. Fixed with idempotent task declarations; second run confirmed 0 changes |
 | [Terraform State Locking](./incident_reports/terraform-locking.md) | Simulated locking behavior by interrupting an active apply; observed lock persistence and need for manual unlock using `terraform force-unlock` mid-execution | Without DynamoDB, state file can be overwritten. With locking, second apply is blocked until the lock is released or force-unlocked |
 | [NAT Connectivity Failure](./incident_reports/nat-connectivity-incident.md) | Private EC2 had no outbound internet access after initial provisioning | NAT Instance was in the wrong subnet. Fixed subnet association, verified with `curl` from private EC2 |
-
----
-
-## ECS vs Kubernetes — When to Use Each
-
-This project deploys containers directly on EC2 via Docker. In a production system, you'd likely use an orchestrator. Here's the decision framework:
-
-**Choose ECS (especially with Fargate) when:**
-- Your team is AWS-native and wants minimal operational overhead
-- You don't need multi-cloud portability
-- The workload is straightforward: run containers, scale them, done
-- You want to avoid managing control planes entirely (Fargate handles this)
-- Cost predictability matters more than scheduling flexibility
-
-**Choose Kubernetes (EKS or self-managed) when:**
-- You need fine-grained scheduling, affinity rules, or custom controllers
-- The system has multiple teams deploying independently (namespace isolation)
-- Multi-cloud or on-prem portability is a requirement
-- Your team already has Kubernetes expertise and the complexity is justified
-- You need ecosystem tools: Argo CD, Keda, Istio, Prometheus Operator
-
-**What Fargate is:** AWS Fargate is a serverless compute engine for containers — you define the task (CPU, memory, image), and AWS handles the underlying EC2 provisioning. No nodes to patch, no cluster capacity to manage. Works with both ECS and EKS. The tradeoff is less control over the host and slightly higher per-unit cost vs. reserved EC2.
-
-**This project used raw Docker on EC2** to understand what orchestrators abstract away — container lifecycle, networking, restarts — before relying on tools that hide it.
 
 ---
 
@@ -261,9 +275,3 @@ Walkthrough covers: Terraform provisioning → Ansible configuration → SSH via
 
 - [P1 — Linux Reliability Toolkit](https://github.com/VeeraReddyRavuri/linux-reliability-toolkit) — System monitoring and failure simulation
 - [P2 — Bug Tracker Containerized Stack](https://github.com/VeeraReddyRavuri/bug-tracker-containerized-stack) — FastAPI + PostgreSQL + Nginx in Docker
-
----
-
-## Version
-
-**Version:** v1.0.0
